@@ -133,6 +133,7 @@ def analyze_and_alert():
     
     print(f"🔍 Main coins: {main_coins}")
     print(f"🔍 Total symbols: {len(all_coins)} ({len(all_coins) - len(main_coins)} dynamic)")
+    print(f"🔍 Dynamic coins: {[s for s in all_coins if s not in main_coins]}")
     
     signals_main = []
     signals_others = []
