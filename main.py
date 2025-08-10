@@ -19,9 +19,11 @@ import threading
 import matplotlib.pyplot as plt
 import io
 import base64
+import config
 
-TELEGRAM_TOKEN = '8258155089:AAEsuHGa6HWp4GZfsQb4X6F3igTzvpA315w'
-TELEGRAM_CHAT_ID = '7047923199'
+# Use settings from config
+TELEGRAM_TOKEN = config.TELEGRAM_TOKEN
+TELEGRAM_CHAT_ID = config.TELEGRAM_CHAT_ID
 
 def send_telegram(text, image=None):
     url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
@@ -122,7 +124,16 @@ def get_cg_ohlc(coin_id, days=1):
     return []
 
 def analyze_and_alert():
-    coins = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+    # Import config để lấy symbols
+    import config
+    
+    # Phân chia coins
+    main_coins = config.FIXED_SYMBOLS  # 4 coins chính
+    all_coins = config.SYMBOLS  # Tất cả coins bao gồm dynamic
+    
+    print(f"🔍 Main coins: {main_coins}")
+    print(f"🔍 Total symbols: {len(all_coins)} ({len(all_coins) - len(main_coins)} dynamic)")
+    
     signals_main = []
     signals_others = []
     state = {}
@@ -377,7 +388,7 @@ def analyze_and_alert():
                     f"📊 ATR: {atr:.4f} | Volatility: {current_volatility*100:.2f}%"
                 )
                 chart_image = make_chart()
-                if symbol in coins:
+                if symbol in main_coins:
                     signals_main.append((entry_msg, chart_image))
                 else:
                     signals_others.append((entry_msg, chart_image))
@@ -427,7 +438,7 @@ def analyze_and_alert():
                         f"🔍 Lý do thoát: {exit_reason}"
                     )
                     chart_image = make_chart()
-                    if symbol in coins:
+                    if symbol in main_coins:
                         signals_main.append((exit_msg, chart_image))
                     else:
                         signals_others.append((exit_msg, chart_image))
@@ -437,7 +448,7 @@ def analyze_and_alert():
             print(f"{symbol}: Lỗi khi phân tích: {e}")
 
     threads = []
-    for symbol in coins:
+    for symbol in all_coins:
         t = threading.Thread(target=analyze_symbol, args=(symbol,))
         threads.append(t)
         t.start()
