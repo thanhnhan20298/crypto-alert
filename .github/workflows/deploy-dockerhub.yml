@@ -1,0 +1,46 @@
+name: Deploy via Docker Hub
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/crypto-alert:latest
+            ${{ secrets.DOCKER_USERNAME }}/crypto-alert:${{ github.sha }}
+
+      - name: Deploy to Google Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v1
+        with:
+          service: crypto-alert
+          image: ${{ secrets.DOCKER_USERNAME }}/crypto-alert:latest
+          region: asia-southeast1
+          credentials: ${{ secrets.GCP_SA_KEY }}
+          flags: |
+            --allow-unauthenticated
+            --memory=512Mi
+            --cpu=1
+            --timeout=3600
+            --concurrency=1
+            --max-instances=1
