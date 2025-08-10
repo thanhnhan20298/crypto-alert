@@ -199,17 +199,182 @@ def analyze_and_alert():
                 plt.close(fig)
                 return buf
             if signal and signal != prev['side']:
-                tp = price + tp_ratio * atr if signal == 'LONG' else price - tp_ratio * atr
-                sl = price - sl_ratio * atr if signal == 'LONG' else price + sl_ratio * atr
+                # Tính toán vùng giá vào tối ưu với nhiều yếu tố
+                current_volatility = atr / price if atr and price > 0 else 0.01
+                
+                if signal == 'LONG':
+                    # Vùng vào LONG: ưu tiên các mức hỗ trợ
+                    base_entry = max(support, bb_lower if bb_lower else support)
+                    
+                    # Điều chỉnh dựa trên RSI
+                    if rsi is not None and rsi < 25:  # RSI quá bán rất mạnh
+                        entry_adjustment = -0.002  # Vào sớm hơn
+                    elif rsi is not None and rsi < 35:  # RSI quá bán
+                        entry_adjustment = -0.001
+                    else:
+                        entry_adjustment = 0
+                    
+                    # Điều chỉnh dựa trên MACD
+                    if macd is not None and macd_signal is not None:
+                        macd_momentum = (macd - macd_signal) / price if price > 0 else 0
+                        if macd_momentum > 0.001:  # MACD tăng mạnh
+                            entry_adjustment += -0.001  # Vào sớm hơn
+                    
+                    entry_zone_low = base_entry * (1 + entry_adjustment - current_volatility * 0.5)
+                    entry_zone_high = price * (1 + entry_adjustment + current_volatility * 0.3)
+                    optimal_entry = (entry_zone_low * 0.7 + entry_zone_high * 0.3)  # Thiên về giá thấp
+                    
+                else:  # SHORT
+                    # Vùng vào SHORT: ưu tiên các mức kháng cự
+                    base_entry = min(resistance, bb_upper if bb_upper else resistance)
+                    
+                    # Điều chỉnh dựa trên RSI
+                    if rsi is not None and rsi > 75:  # RSI quá mua rất mạnh
+                        entry_adjustment = 0.002  # Vào sớm hơn
+                    elif rsi is not None and rsi > 65:  # RSI quá mua
+                        entry_adjustment = 0.001
+                    else:
+                        entry_adjustment = 0
+                    
+                    # Điều chỉnh dựa trên MACD
+                    if macd is not None and macd_signal is not None:
+                        macd_momentum = (macd - macd_signal) / price if price > 0 else 0
+                        if macd_momentum < -0.001:  # MACD giảm mạnh
+                            entry_adjustment += 0.001  # Vào sớm hơn
+                    
+                    entry_zone_high = base_entry * (1 + entry_adjustment + current_volatility * 0.5)
+                    entry_zone_low = price * (1 + entry_adjustment - current_volatility * 0.3)
+                    optimal_entry = (entry_zone_high * 0.7 + entry_zone_low * 0.3)  # Thiên về giá cao
+                
+                # Tính TP/SL dựa trên optimal entry và volatility
+                atr_multiplier = max(1.5, min(3.0, current_volatility * 100))  # Điều chỉnh theo volatility
+                tp = optimal_entry * (1 + tp_ratio * current_volatility * atr_multiplier) if signal == 'LONG' else optimal_entry * (1 - tp_ratio * current_volatility * atr_multiplier)
+                sl = optimal_entry * (1 - sl_ratio * current_volatility * atr_multiplier) if signal == 'LONG' else optimal_entry * (1 + sl_ratio * current_volatility * atr_multiplier)
+                
+                # Đánh giá độ mạnh của tín hiệu để xác định thời điểm vào
+                signal_strength = 0
+                urgency_score = 0
+                
+                # Đánh giá RSI
+                if rsi is not None:
+                    if signal == 'LONG':
+                        if rsi < 20:
+                            signal_strength += 3
+                            urgency_score += 2
+                        elif rsi < 30:
+                            signal_strength += 2
+                            urgency_score += 1
+                        elif rsi < 40:
+                            signal_strength += 1
+                    else:  # SHORT
+                        if rsi > 80:
+                            signal_strength += 3
+                            urgency_score += 2
+                        elif rsi > 70:
+                            signal_strength += 2
+                            urgency_score += 1
+                        elif rsi > 60:
+                            signal_strength += 1
+                
+                # Đánh giá MACD
+                if macd is not None and macd_signal is not None:
+                    macd_diff = abs(macd - macd_signal)
+                    macd_strength = macd_diff / price if price > 0 else 0
+                    
+                    if macd_strength > 0.002:
+                        signal_strength += 3
+                        urgency_score += 2
+                    elif macd_strength > 0.001:
+                        signal_strength += 2
+                        urgency_score += 1
+                    elif macd_strength > 0.0005:
+                        signal_strength += 1
+                
+                # Đánh giá vị trí giá so với vùng vào
+                price_position_score = 0
+                if signal == 'LONG':
+                    if price <= entry_zone_low:
+                        price_position_score = 3
+                        urgency_score += 3
+                    elif price <= optimal_entry:
+                        price_position_score = 2
+                        urgency_score += 2
+                    elif price <= entry_zone_high:
+                        price_position_score = 1
+                        urgency_score += 1
+                else:  # SHORT
+                    if price >= entry_zone_high:
+                        price_position_score = 3
+                        urgency_score += 3
+                    elif price >= optimal_entry:
+                        price_position_score = 2
+                        urgency_score += 2
+                    elif price >= entry_zone_low:
+                        price_position_score = 1
+                        urgency_score += 1
+                
+                signal_strength += price_position_score
+                
+                # Đánh giá Bollinger Bands
+                if bb_upper and bb_lower and ma:
+                    bb_position = (price - ma) / (bb_upper - bb_lower) if (bb_upper - bb_lower) > 0 else 0
+                    if signal == 'LONG' and bb_position < -0.8:  # Gần BB Lower
+                        signal_strength += 2
+                        urgency_score += 1
+                    elif signal == 'SHORT' and bb_position > 0.8:  # Gần BB Upper
+                        signal_strength += 2
+                        urgency_score += 1
+                
+                # Xác định mức độ ưu tiên và thời điểm vào lệnh
+                if urgency_score >= 6:
+                    entry_timing = "🔥 VÀO NGAY LẬP TỨC - Cơ hội hiếm"
+                    entry_strategy = "Market Order ngay"
+                elif urgency_score >= 4:
+                    entry_timing = "⚡ VÀO NGAY - Tín hiệu rất mạnh"
+                    entry_strategy = "Limit Order tại giá hiện tại"
+                elif urgency_score >= 2:
+                    entry_timing = "⏰ Chờ giá về vùng - Tín hiệu khá"
+                    entry_strategy = f"Limit Order tại {optimal_entry:,.4f}"
+                else:
+                    entry_timing = "👀 Quan sát thêm - Tín hiệu yếu"
+                    entry_strategy = "Đợi xác nhận thêm"
+                
+                # Tính toán khoảng cách giá
+                price_distance = abs(price - optimal_entry) / optimal_entry * 100 if optimal_entry > 0 else 0
+                
+                # Risk/Reward ratio
+                risk = abs(optimal_entry - sl)
+                reward = abs(tp - optimal_entry)
+                rr_ratio = reward / risk if risk > 0 else 0
+                
+                # Đánh giá chất lượng setup
+                if signal_strength >= 8 and rr_ratio >= 2:
+                    setup_quality = "🏆 XUẤT SẮC"
+                elif signal_strength >= 6 and rr_ratio >= 1.5:
+                    setup_quality = "⭐ TỐT"
+                elif signal_strength >= 4 and rr_ratio >= 1:
+                    setup_quality = "👍 KHẤP KHẨM"
+                else:
+                    setup_quality = "⚠️ RỦI RO"
+                
                 entry_msg = (
-                    f"Tên coin: {symbol}\n"
-                    f"Lệnh: {signal} {leverage}x\n"
-                    f"Thời điểm vào: {now}\n"
-                    f"TP: {tp:,.2f} | SL: {sl:,.2f}\n"
-                    f"Vùng hỗ trợ: {support:,.2f} | Vùng kháng cự: {resistance:,.2f}\n"
-                    f"Bollinger: MA={ma:,.2f} Upper={bb_upper:,.2f} Lower={bb_lower:,.2f}\n"
-                    f"Stochastic: K={stoch_k:.2f} D={stoch_d:.2f}\n"
-                    f"Thời điểm ra: ..."
+                    f"🚀 Tên Coin: {symbol}\n"
+                    f"📊 Lệnh: {signal} {leverage}x\n"
+                    f"💰 Giá hiện tại: {price:,.4f}\n"
+                    f"🎯 Vùng vào: {entry_zone_low:,.4f} - {entry_zone_high:,.4f}\n"
+                    f"⭐ Giá vào tối ưu: {optimal_entry:,.4f}\n"
+                    f"📏 Khoảng cách: {price_distance:.2f}%\n"
+                    f"🎯 TP: {tp:,.4f} | 🛡️ SL: {sl:,.4f}\n"
+                    f"📈 R/R Ratio: 1:{rr_ratio:.2f}\n"
+                    f"🔥 Độ mạnh tín hiệu: {signal_strength}/12\n"
+                    f"🏅 Chất lượng setup: {setup_quality}\n"
+                    f"⏰ Thời điểm vào: {entry_timing}\n"
+                    f"💡 Chiến lược: {entry_strategy}\n"
+                    f"📅 Thời gian phân tích: {now}\n"
+                    f"📊 Support: {support:,.4f} | Resistance: {resistance:,.4f}\n"
+                    f"📈 RSI: {rsi:.1f} | MACD: {macd:.4f}/{macd_signal:.4f}\n"
+                    f"📊 Bollinger: MA={ma:,.4f} Upper={bb_upper:,.4f} Lower={bb_lower:,.4f}\n"
+                    f"📊 ATR: {atr:.4f} | Volatility: {current_volatility*100:.2f}%"
                 )
                 chart_image = make_chart()
                 if symbol in coins:
@@ -217,7 +382,7 @@ def analyze_and_alert():
                 else:
                     signals_others.append((entry_msg, chart_image))
                 print(entry_msg)
-                state[symbol] = {'side': signal, 'entry': price, 'entry_time': now, 'tp': tp, 'sl': sl}
+                state[symbol] = {'side': signal, 'entry': optimal_entry, 'entry_time': now, 'tp': tp, 'sl': sl}
             elif prev['side']:
                 exit_reason = None
                 if (prev['side'] == 'LONG' and price >= prev['tp']) or (prev['side'] == 'SHORT' and price <= prev['tp']):
@@ -234,12 +399,32 @@ def analyze_and_alert():
                 if not signal and exit_reason is None:
                     exit_reason = 'Signal reversed'
                 if exit_reason:
+                    # Tính toán P&L
+                    pnl_percent = 0
+                    if prev['side'] == 'LONG':
+                        pnl_percent = ((price - prev['entry']) / prev['entry']) * 100 * leverage
+                    else:
+                        pnl_percent = ((prev['entry'] - price) / prev['entry']) * 100 * leverage
+                    
+                    # Tính thời gian hold
+                    entry_time_struct = time.strptime(prev['entry_time'], '%Y-%m-%d %H:%M:%S')
+                    entry_timestamp = time.mktime(entry_time_struct)
+                    now_timestamp = time.mktime(time.strptime(now, '%Y-%m-%d %H:%M:%S'))
+                    hold_minutes = int((now_timestamp - entry_timestamp) / 60)
+                    hold_hours = hold_minutes // 60
+                    hold_mins = hold_minutes % 60
+                    
                     exit_msg = (
-                        f"Tên coin: {symbol}\n"
-                        f"Lệnh: {prev['side']} {leverage}x\n"
-                        f"Thời điểm vào: {prev['entry_time']}\n"
-                        f"Thời điểm ra: {now}\n"
-                        f"Lý do thoát: {exit_reason}"
+                        f"❌ ĐÓNG LỆNH: {symbol}\n"
+                        f"📊 Lệnh: {prev['side']} {leverage}x\n"
+                        f"💰 Giá vào: {prev['entry']:,.4f}\n"
+                        f"💰 Giá ra: {price:,.4f}\n"
+                        f"🎯 TP đặt: {prev['tp']:,.4f} | 🛡️ SL đặt: {prev['sl']:,.4f}\n"
+                        f"📈 P&L: {pnl_percent:+.2f}%\n"
+                        f"⏰ Thời gian vào: {prev['entry_time']}\n"
+                        f"⏰ Thời gian ra: {now}\n"
+                        f"🕒 Thời gian hold: {hold_hours}h {hold_mins}m\n"
+                        f"🔍 Lý do thoát: {exit_reason}"
                     )
                     chart_image = make_chart()
                     if symbol in coins:
